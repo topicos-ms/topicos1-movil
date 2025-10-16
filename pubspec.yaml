@@ -47,8 +47,14 @@ dependencies:
   # Secure storage
   flutter_secure_storage: ^9.0.0
   
+  # UUID generation
+  uuid: ^4.5.1
+  
   # Navigation
   go_router: ^13.0.0
+  
+  # WebSocket / Socket.IO
+  socket_io_client: ^2.0.3+1
 
 dev_dependencies:
   flutter_test:

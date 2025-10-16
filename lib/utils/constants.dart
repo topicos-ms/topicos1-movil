@@ -1,7 +1,7 @@
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 class Constants {
-  static String get baseUrl => dotenv.env['BASE_URL'] ?? 'http://10.0.2.1:3000/api';
+  static String get baseUrl => dotenv.env['BASE_URL'] ?? 'http://10.0.2.2:3000';
   
   // API Endpoints
   static const String loginEndpoint = '/auth/login';
