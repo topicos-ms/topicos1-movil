@@ -10,6 +10,8 @@ import 'screens/register_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/enrollment_screen.dart';
 import 'screens/courses_screen.dart';
+import 'screens/course_sections_screen.dart';
+import 'screens/enrollment_confirmation_screen.dart';
 import 'screens/academic_history_screen.dart';
 
 void main() async {
@@ -43,6 +45,8 @@ class MyApp extends StatelessWidget {
           '/home': (context) => const HomeScreen(),
           '/enrollment': (context) => const EnrollmentScreen(),
           '/courses': (context) => const CoursesScreen(),
+          '/course-sections': (context) => const CourseSectionsScreen(),
+          '/enrollment-confirmation': (context) => const EnrollmentConfirmationScreen(),
           '/academic-history': (context) => const AcademicHistoryScreen(),
         },
       ),

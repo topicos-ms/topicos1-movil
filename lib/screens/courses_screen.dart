@@ -40,23 +40,7 @@ class _CoursesScreenState extends State<CoursesScreen> {
     }
 
     try {
-      // Primero obtener el enrollment_id
-      await courseController.loadEnrollmentId(studentId);
-      
-      if (courseController.enrollmentId == null) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('No tienes una matrícula activa. Por favor, matricúlate primero.'),
-              backgroundColor: Colors.orange,
-              duration: Duration(seconds: 4),
-            ),
-          );
-        }
-        return;
-      }
-
-      // Luego cargar las materias recomendadas
+      // PASO 1: Cargar las materias recomendadas
       await courseController.loadRecommendedCourses(studentId);
       
     } catch (e) {
@@ -71,36 +55,41 @@ class _CoursesScreenState extends State<CoursesScreen> {
     }
   }
 
-  void _enrollCourses() async {
+  void _proceedToSectionSelection() async {
     final courseController = context.read<CourseController>();
     
-    try {
-      await courseController.enrollSelectedCourses();
-      
-      if (mounted && courseController.successMessage != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(courseController.successMessage!),
-            backgroundColor: Colors.green,
+    // Validar que haya materias seleccionadas
+    if (courseController.selectedCourses.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Debes seleccionar al menos una materia'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    // Validar que todas las materias seleccionadas cumplan prerequisitos
+    final withoutPrerequisites = courseController.selectedCourses
+        .where((c) => !c.isPrerequisitesMet)
+        .toList();
+    
+    if (withoutPrerequisites.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'No puedes inscribir materias sin cumplir prerequisitos: ${withoutPrerequisites.map((c) => c.code).join(", ")}',
           ),
-        );
-        
-        // Volver al home después de 2 segundos
-        Future.delayed(const Duration(seconds: 2), () {
-          if (mounted) {
-            Navigator.of(context).pop();
-          }
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+      return;
+    }
+
+    // Navegar a la pantalla de selección de secciones
+    if (mounted) {
+      Navigator.pushNamed(context, '/course-sections');
     }
   }
 
@@ -250,7 +239,7 @@ class _CoursesScreenState extends State<CoursesScreen> {
           ),
         ),
 
-        // Botón de inscripción
+        // Botón para continuar a selección de secciones
         if (controller.courses.isNotEmpty)
           Container(
             padding: const EdgeInsets.all(16),
@@ -268,7 +257,9 @@ class _CoursesScreenState extends State<CoursesScreen> {
               child: SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: controller.selectedCourses.isEmpty ? null : _enrollCourses,
+                  onPressed: controller.canProceedToSectionSelection 
+                      ? _proceedToSectionSelection 
+                      : null,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.secondary,
                     foregroundColor: Colors.white,
@@ -281,7 +272,9 @@ class _CoursesScreenState extends State<CoursesScreen> {
                   child: Text(
                     controller.selectedCourses.isEmpty
                         ? 'SELECCIONA AL MENOS UNA MATERIA'
-                        : 'INSCRIBIR ${controller.selectedCourses.length} MATERIA(S)',
+                        : controller.canProceedToSectionSelection
+                            ? 'CONTINUAR (${controller.selectedCourses.length} MATERIA(S))'
+                            : 'MATERIAS CON REQUISITOS PENDIENTES',
                     style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
@@ -334,15 +327,21 @@ class _CoursesScreenState extends State<CoursesScreen> {
                 Text('${course.credits} créditos'),
                 const SizedBox(width: 16),
                 Icon(
-                  Icons.layers,
+                  course.isPrerequisitesMet ? Icons.check_circle : Icons.warning,
                   size: 14,
-                  color: AppColors.primary,
+                  color: course.isPrerequisitesMet ? Colors.green : Colors.orange,
                 ),
                 const SizedBox(width: 4),
-                Text(course.levelName),
+                Text(
+                  course.isPrerequisitesMet ? 'Disponible' : 'Requisitos pendientes',
+                  style: TextStyle(
+                    color: course.isPrerequisitesMet ? Colors.green : Colors.orange,
+                    fontSize: 12,
+                  ),
+                ),
               ],
             ),
-            if (course.prerequisites.isNotEmpty) ...[
+            if (!course.isPrerequisitesMet && course.missingPrerequisites.isNotEmpty) ...[
               const SizedBox(height: 4),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -350,15 +349,15 @@ class _CoursesScreenState extends State<CoursesScreen> {
                   const Icon(
                     Icons.info_outline,
                     size: 14,
-                    color: Colors.grey,
+                    color: Colors.orange,
                   ),
                   const SizedBox(width: 4),
                   Expanded(
                     child: Text(
-                      'Requisitos: ${course.prerequisites.join(", ")}',
+                      'Faltan: ${course.missingPrerequisites.join(", ")}',
                       style: const TextStyle(
                         fontSize: 12,
-                        color: Colors.grey,
+                        color: Colors.orange,
                       ),
                     ),
                   ),
