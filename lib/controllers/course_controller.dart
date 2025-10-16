@@ -56,9 +56,8 @@ class CourseController extends ChangeNotifier {
   bool get canProceedToSectionSelection => 
       selectedCourses.isNotEmpty && selectedCourses.every((c) => c.isPrerequisitesMet);
   
-  bool get canProceedToEnrollment => 
-      selectedCourses.isNotEmpty && 
-      selectedCourses.every((c) => c.selectedSectionId != null);
+  bool get canProceedToEnrollment =>
+      selectedCourses.any((c) => c.selectedSectionId != null);
 
   /// Carga las materias recomendadas para un estudiante
   Future<void> loadRecommendedCourses(String studentId) async {
@@ -299,10 +298,11 @@ class CourseController extends ChangeNotifier {
       return null;
     }
 
-    // Validar que todas las materias tengan una sección seleccionada
-    final withoutSection = selected.where((c) => c.selectedSectionId == null).toList();
-    if (withoutSection.isNotEmpty) {
-      _errorMessage = 'Debe seleccionar un grupo para cada materia';
+    // Tomar solo las materias con grupo seleccionado
+    final coursesWithSection =
+        selected.where((c) => c.selectedSectionId != null).toList();
+    if (coursesWithSection.isEmpty) {
+      _errorMessage = 'Debes seleccionar al menos un grupo';
       _state = CourseLoadingState.error;
       notifyListeners();
       return null;
@@ -318,10 +318,12 @@ class CourseController extends ChangeNotifier {
       final token = await _storageService.getToken();
 
       // Construir la solicitud de inscripción en lote
-      final items = selected.map((course) => EnrollmentItem(
-        enrollmentId: _enrollmentId!,
-        courseSectionId: course.selectedSectionId!,
-      )).toList();
+      final items = coursesWithSection
+          .map((course) => EnrollmentItem(
+                enrollmentId: _enrollmentId!,
+                courseSectionId: course.selectedSectionId!,
+              ))
+          .toList();
 
       final request = BatchEnrollmentRequest(items: items);
 
@@ -353,60 +355,53 @@ class CourseController extends ChangeNotifier {
   }
 
   /// Consulta el resultado de la inscripción batch usando el jobId
-  Future<void> checkEnrollmentResult(String jobId) async {
+  /// Retorna el estado del job según lo provea la cola.
+  Future<String?> checkEnrollmentResult(String jobId) async {
     _state = CourseLoadingState.enrolling;
     _errorMessage = null;
+    _successMessage = null;
+    _enrollmentResult = null;
     notifyListeners();
 
     try {
-      print('🔍 Consultando resultado de inscripción: $jobId');
-      
-      final completer = Completer<void>();
+      print('[Enrollment] Consultando resultado para job $jobId');
+      final data = await _pollingService.fetchJobStatus(jobId);
+      final status = (data['status'] as String?)?.toLowerCase();
 
-      _pollingService.startPolling(
-        jobId: jobId,
-        onUpdate: (data) {
-          print('📨 Polling update recibido para inscripción');
-          final status = data['status'] as String?;
-          
-          if (status == 'completed') {
-            print('✅ Inscripción completada');
-            final result = _courseService.parseBatchEnrollmentFromPollingResult(data);
-            _enrollmentResult = result;
-            
-            if (result.success) {
-              final count = result.enrolledSections?.length ?? selectedCourses.length;
-              _successMessage = '✅ $count materias inscritas exitosamente';
-              _state = CourseLoadingState.completed;
-            } else {
-              _errorMessage = result.message;
-              _state = CourseLoadingState.error;
-            }
-            
-            notifyListeners();
-            completer.complete();
-          } else if (status == 'failed') {
-            print('❌ Error en inscripción');
-            _errorMessage = 'Error al procesar la inscripción';
-            _state = CourseLoadingState.error;
-            notifyListeners();
-            completer.completeError(Exception(_errorMessage));
-          } else if (status == 'timeout') {
-            print('⏱️ Timeout al procesar inscripción');
-            _errorMessage = 'Tiempo de espera agotado';
-            _state = CourseLoadingState.error;
-            notifyListeners();
-            completer.completeError(TimeoutException('Timeout'));
-          }
-        },
-      );
+      print('[Enrollment] Estado recibido: $status');
 
-      await completer.future;
+      if (status == 'completed') {
+        final result = _courseService.parseBatchEnrollmentFromPollingResult(data);
+        _enrollmentResult = result;
+
+        if (result.success) {
+          final count = result.enrolledSections?.length ??
+              selectedCourses.where((c) => c.selectedSectionId != null).length;
+          _successMessage = '✅ $count materias inscritas exitosamente';
+          _state = CourseLoadingState.completed;
+        } else {
+          _errorMessage = result.message;
+          _state = CourseLoadingState.error;
+        }
+      } else if (status == 'failed') {
+        _errorMessage = (data['error'] as String?) ?? 'Error al procesar la inscripción';
+        _state = CourseLoadingState.error;
+      } else if (status == 'timeout') {
+        _errorMessage = 'Tiempo de espera agotado';
+        _state = CourseLoadingState.error;
+      } else {
+        // Estados intermedios (delayed, waiting, active, etc.)
+        _state = CourseLoadingState.idle;
+      }
+
+      notifyListeners();
+      return status;
     } catch (e) {
-      print('❌ Error al consultar resultado: $e');
+      print('[Enrollment] Error al consultar resultado: $e');
       _errorMessage = 'Error al consultar resultado: $e';
       _state = CourseLoadingState.error;
       notifyListeners();
+      return null;
     }
   }
 

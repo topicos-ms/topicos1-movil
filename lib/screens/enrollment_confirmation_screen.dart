@@ -233,9 +233,9 @@ class EnrollmentConfirmationScreen extends StatelessWidget {
                         width: double.infinity,
                         child: ElevatedButton(
                           onPressed: () {
-                            // Limpiar el estado y volver al home
-                            controller.clearState();
+                            // Volver al inicio antes de limpiar el estado para evitar parpadeos
                             Navigator.of(context).popUntil((route) => route.isFirst);
+                            controller.clearState();
                           },
                           style: ElevatedButton.styleFrom(
                             backgroundColor: isSuccess ? AppColors.primary : Colors.grey,

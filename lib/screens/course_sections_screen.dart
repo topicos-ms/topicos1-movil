@@ -64,11 +64,11 @@ class _CourseSectionsScreenState extends State<CourseSectionsScreen> {
       return;
     }
 
-    // Validar que todas las materias tengan un grupo seleccionado
+    // Validar que exista al menos un grupo seleccionado
     if (!courseController.canProceedToEnrollment) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Debes seleccionar un grupo para cada materia'),
+          content: Text('Debes seleccionar al menos un grupo'),
           backgroundColor: Colors.orange,
         ),
       );
@@ -189,16 +189,60 @@ class _CourseSectionsScreenState extends State<CourseSectionsScreen> {
 
   Future<void> _checkEnrollmentResult(String jobId) async {
     final courseController = context.read<CourseController>();
-    
+
     try {
-      await courseController.checkEnrollmentResult(jobId);
-      
-      // Navegar a la pantalla de confirmación
-      if (mounted && courseController.enrollmentResult != null) {
+      final status = await courseController.checkEnrollmentResult(jobId);
+
+      if (!mounted) {
+        return;
+      }
+
+      if (status == 'completed' && courseController.enrollmentResult != null) {
         Navigator.pushReplacementNamed(context, '/enrollment-confirmation');
+        return;
+      }
+
+      if (status == 'delayed' || status == 'waiting' || status == 'active') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Tu solicitud sigue en proceso. Vuelve a consultar en unos instantes.'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+        _showEnrollmentModal(jobId);
+        return;
+      }
+
+      if (status == 'failed' || status == 'timeout') {
+        final message = courseController.errorMessage ?? 'No se pudo completar la inscripción.';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(message),
+            backgroundColor: Colors.red,
+          ),
+        );
+        _showEnrollmentModal(jobId);
+        return;
+      }
+
+      if (status == null) {
+        final message = courseController.errorMessage ?? 'No se pudo consultar el estado de la inscripción.';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(message),
+            backgroundColor: Colors.red,
+          ),
+        );
+        _showEnrollmentModal(jobId);
       }
     } catch (e) {
       if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al consultar la inscripciA3n: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
         // Volver a mostrar el modal con el mismo jobId para reintentar
         _showEnrollmentModal(jobId);
       }
@@ -250,7 +294,7 @@ class _CourseSectionsScreenState extends State<CourseSectionsScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Selecciona un grupo para cada materia',
+                'Selecciona los grupos que deseas inscribir',
                 style: const TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
@@ -314,7 +358,7 @@ class _CourseSectionsScreenState extends State<CourseSectionsScreen> {
                 child: Text(
                   controller.canProceedToEnrollment
                       ? 'INSCRIBIR MATERIAS'
-                      : 'SELECCIONA UN GRUPO PARA CADA MATERIA',
+                      : 'SELECCIONA AL MENOS UN GRUPO',
                   style: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,

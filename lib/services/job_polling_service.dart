@@ -91,6 +91,25 @@ class JobPollingService {
     });
   }
   
+  /// Obtiene el estado actual de un job en una unica peticion
+  Future<Map<String, dynamic>> fetchJobStatus(String jobId) async {
+    final url = Uri.parse('${Constants.baseUrl}/queues/job/$jobId/status');
+    print('[JobPolling] Single status request GET $url');
+
+    final response = await http.get(
+      url,
+      headers: {'Content-Type': 'application/json'},
+    );
+
+    print('[JobPolling] Single status response: ${response.statusCode}');
+
+    if (response.statusCode == 200) {
+      return json.decode(response.body) as Map<String, dynamic>;
+    }
+
+    throw Exception('No se pudo obtener el estado del job (codigo ${response.statusCode})');
+  }
+  
   /// Detiene el polling actual
   void stopPolling() {
     print('🛑 Deteniendo polling HTTP');
