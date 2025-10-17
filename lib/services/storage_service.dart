@@ -32,6 +32,28 @@ class StorageService {
     await _storage.delete(key: Constants.userKey);
   }
 
+  Future<void> saveEnrollmentId({
+    required String studentId,
+    required String enrollmentId,
+  }) async {
+    await _storage.write(
+      key: '${Constants.enrollmentIdKeyPrefix}$studentId',
+      value: enrollmentId,
+    );
+  }
+
+  Future<String?> getEnrollmentId(String studentId) async {
+    return await _storage.read(
+      key: '${Constants.enrollmentIdKeyPrefix}$studentId',
+    );
+  }
+
+  Future<void> deleteEnrollmentId(String studentId) async {
+    await _storage.delete(
+      key: '${Constants.enrollmentIdKeyPrefix}$studentId',
+    );
+  }
+
   Future<void> clearAll() async {
     await _storage.deleteAll();
   }

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../controllers/course_controller.dart';
 import '../controllers/auth_controller.dart';
@@ -24,37 +24,10 @@ class _CourseSectionsScreenState extends State<CourseSectionsScreen> {
 
   Future<void> _loadSections() async {
     final courseController = context.read<CourseController>();
-    
-    try {
-      // PASO 3: Cargar las secciones de todas las materias seleccionadas
-      await courseController.loadSectionsForSelectedCourses();
-      
-      if (mounted && courseController.errorMessage != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(courseController.errorMessage!),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error al cargar secciones: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
-  void _proceedToEnrollment() async {
-    final authController = context.read<AuthController>();
-    final courseController = context.read<CourseController>();
-    final studentId = authController.currentUser?.id;
+    final studentId = context.read<AuthController>().currentUser?.id;
 
     if (studentId == null) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Error: No se pudo obtener el ID del estudiante'),
@@ -63,6 +36,49 @@ class _CourseSectionsScreenState extends State<CourseSectionsScreen> {
       );
       return;
     }
+
+    try {
+      // PASO 3: Cargar las secciones de todas las materias seleccionadas
+      await courseController.loadSectionsForSelectedCourses();
+
+      if (mounted && courseController.errorMessage != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(courseController.errorMessage!),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+
+      if (!mounted) return;
+
+      await courseController.loadEnrollmentId(studentId);
+
+      if (mounted && courseController.enrollmentId == null) {
+        final message = courseController.errorMessage ??
+            'No se pudo obtener tu matricula activa. Intenta nuevamente.';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(message),
+            backgroundColor: Colors.orange,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al cargar informacion: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  void _proceedToEnrollment() async {
+    final courseController = context.read<CourseController>();
 
     // Validar que exista al menos un grupo seleccionado
     if (!courseController.canProceedToEnrollment) {
@@ -75,23 +91,31 @@ class _CourseSectionsScreenState extends State<CourseSectionsScreen> {
       return;
     }
 
-    try {
-      // PASO 5: Obtener el enrollment_id
-      await courseController.loadEnrollmentId(studentId);
-      
-      if (courseController.enrollmentId == null) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('No tienes una matrícula activa. Por favor, matricúlate primero.'),
-              backgroundColor: Colors.orange,
-              duration: Duration(seconds: 4),
-            ),
-          );
-        }
-        return;
-      }
+    if (courseController.state == CourseLoadingState.loadingEnrollmentId) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Estamos obteniendo tu matricula. Intenta nuevamente en unos segundos.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
 
+    if (courseController.enrollmentId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            courseController.errorMessage ??
+                'No se pudo obtener tu matricula activa. Intenta nuevamente.',
+          ),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+      return;
+    }
+
+    try {
       // PASO 6: Inscribir las materias en lote (recibe jobId)
       final jobId = await courseController.enrollSelectedCourses();
 
@@ -116,136 +140,221 @@ class _CourseSectionsScreenState extends State<CourseSectionsScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(Icons.info_outline, color: AppColors.primary),
-            const SizedBox(width: 12),
-            const Expanded(
-              child: Text(
-                'Inscripción en Proceso',
-                style: TextStyle(fontSize: 18),
-              ),
-            ),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Tu solicitud de inscripción está siendo procesada en el servidor.',
-              style: TextStyle(fontSize: 14),
-            ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.blue.shade50,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.blue.shade200),
-              ),
-              child: Row(
+      builder: (dialogContext) {
+        String infoMessage =
+            'la solicitud de inscripcion esta siendo procesada en el servidor';
+        bool isQuerying = false;
+
+        return StatefulBuilder(
+          builder: (context, setState) {
+            Future<void> handleQuery() async {
+              if (isQuerying) return;
+              setState(() {
+                isQuerying = true;
+              });
+
+              final status = await _checkEnrollmentResult(jobId);
+
+              if (!mounted) return;
+
+              final courseController = this.context.read<CourseController>();
+              final hasResult = courseController.enrollmentResult != null;
+              const pendingStatuses = {
+                'delayed',
+                'waiting',
+                'active',
+                'prioritized',
+                'queued',
+                'pending',
+                'added',
+              };
+              const failureStatuses = {'failed', 'timeout', 'error', 'stalled'};
+
+              if (status == 'completed' && hasResult) {
+                setState(() => isQuerying = false);
+                Navigator.of(dialogContext).pop();
+                Navigator.of(this.context)
+                    .pushReplacementNamed('/enrollment-confirmation');
+                return;
+              }
+
+              if (status != null && failureStatuses.contains(status) && hasResult) {
+                setState(() => isQuerying = false);
+                Navigator.of(dialogContext).pop();
+                Navigator.of(this.context)
+                    .pushReplacementNamed('/enrollment-confirmation');
+                return;
+              }
+
+              if (status != null && pendingStatuses.contains(status)) {
+                setState(() {
+                  infoMessage =
+                      'Tu inscripcion sigue en proceso. Vuelve a consultar en unos instantes.';
+                  isQuerying = false;
+                });
+                return;
+              }
+
+              if (status == null ||
+                  (status != null && failureStatuses.contains(status) && !hasResult)) {
+                final message = courseController.errorMessage ??
+                    'No se pudo consultar el estado de la inscripcion.';
+                setState(() {
+                  infoMessage = message;
+                  isQuerying = false;
+                });
+                return;
+              }
+
+              setState(() {
+                isQuerying = false;
+              });
+            }
+
+            return AlertDialog(
+              title: Row(
                 children: [
-                  Icon(Icons.schedule, color: Colors.blue.shade700, size: 20),
-                  const SizedBox(width: 8),
+                  Icon(Icons.info_outline, color: AppColors.primary),
+                  const SizedBox(width: 12),
                   const Expanded(
                     child: Text(
-                      'Presiona "CONSULTAR INSCRIPCIÓN" para verificar el estado.',
-                      style: TextStyle(fontSize: 12),
+                      'Inscripcion en Proceso',
+                      style: TextStyle(fontSize: 18),
                     ),
                   ),
                 ],
               ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              // Cerrar modal y volver al menú principal
-              Navigator.of(context).pop(); // Cierra el modal
-              Navigator.of(context).popUntil((route) => route.isFirst); // Vuelve al home
-              context.read<CourseController>().clearState();
-            },
-            child: const Text('VOLVER AL MENÚ PRINCIPAL'),
-          ),
-          ElevatedButton.icon(
-            onPressed: () async {
-              Navigator.of(context).pop(); // Cierra el modal
-              await _checkEnrollmentResult(jobId);
-            },
-            icon: const Icon(Icons.refresh),
-            label: const Text('CONSULTAR INSCRIPCIÓN'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.secondary,
-              foregroundColor: Colors.white,
-            ),
-          ),
-        ],
-      ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    infoMessage,
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.blue.shade200),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.schedule, color: Colors.blue.shade700, size: 20),
+                        const SizedBox(width: 8),
+                        const Expanded(
+                          child: Text(
+                            'Presiona "CONSULTAR INSCRIPCION" para verificar el estado.',
+                            style: TextStyle(fontSize: 12),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    Navigator.of(this.context).popUntil((route) => route.isFirst);
+                    this.context.read<CourseController>().clearState();
+                  },
+                  child: const Text('VOLVER AL MENU PRINCIPAL'),
+                ),
+                ElevatedButton.icon(
+                  onPressed: isQuerying ? null : handleQuery,
+                  icon: isQuerying
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.refresh),
+                  label: Text(isQuerying ? 'CONSULTANDO...' : 'CONSULTAR INSCRIPCION'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.secondary,
+                    foregroundColor: Colors.white,
+                    disabledBackgroundColor: AppColors.secondary.withOpacity(0.6),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
-  Future<void> _checkEnrollmentResult(String jobId) async {
+  Future<String?> _checkEnrollmentResult(String jobId) async {
     final courseController = context.read<CourseController>();
 
     try {
       final status = await courseController.checkEnrollmentResult(jobId);
 
       if (!mounted) {
-        return;
+        return null;
       }
 
-      if (status == 'completed' && courseController.enrollmentResult != null) {
-        Navigator.pushReplacementNamed(context, '/enrollment-confirmation');
-        return;
+      final hasResult = courseController.enrollmentResult != null;
+
+      if (status == 'completed' && hasResult) {
+        return status;
       }
 
-      if (status == 'delayed' || status == 'waiting' || status == 'active') {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Tu solicitud sigue en proceso. Vuelve a consultar en unos instantes.'),
-            duration: Duration(seconds: 3),
-          ),
-        );
-        _showEnrollmentModal(jobId);
-        return;
+      const pendingStatuses = {
+        'delayed',
+        'waiting',
+        'active',
+        'prioritized',
+        'queued',
+        'pending',
+        'added',
+      };
+
+      if (status != null && pendingStatuses.contains(status)) {
+        return status;
       }
 
-      if (status == 'failed' || status == 'timeout') {
-        final message = courseController.errorMessage ?? 'No se pudo completar la inscripción.';
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(message),
-            backgroundColor: Colors.red,
-          ),
-        );
-        _showEnrollmentModal(jobId);
-        return;
+      const failureStatuses = {'failed', 'timeout', 'error', 'stalled'};
+
+      if (status != null && failureStatuses.contains(status)) {
+        if (hasResult) {
+          return status;
+        } else {
+          final message = courseController.errorMessage ?? 'No se pudo completar la inscripcion.';
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(message),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return status;
+        }
       }
 
       if (status == null) {
-        final message = courseController.errorMessage ?? 'No se pudo consultar el estado de la inscripción.';
+        final message = courseController.errorMessage ?? 'No se pudo consultar el estado de la inscripcion.';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(message),
             backgroundColor: Colors.red,
           ),
         );
-        _showEnrollmentModal(jobId);
       }
+      return status;
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error al consultar la inscripciA3n: $e'),
+            content: Text('Error al consultar la inscripcion: $e'),
             backgroundColor: Colors.red,
           ),
         );
-        // Volver a mostrar el modal con el mismo jobId para reintentar
-        _showEnrollmentModal(jobId);
       }
+      return null;
     }
   }
 
@@ -326,7 +435,7 @@ class _CourseSectionsScreenState extends State<CourseSectionsScreen> {
           ),
         ),
 
-        // Botón para inscribir
+        // Boton para inscribir
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -502,7 +611,7 @@ class _CourseSectionsScreenState extends State<CourseSectionsScreen> {
               activeColor: AppColors.secondary,
             ),
 
-            // Información de la sección
+            // Informacion de la seccion
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -532,10 +641,12 @@ class _CourseSectionsScreenState extends State<CourseSectionsScreen> {
                           borderRadius: BorderRadius.circular(4),
                         ),
                         child: Text(
-                          section.shift == 'Morning' ? '☀️ Mañana' 
-                              : section.shift == 'Afternoon' ? '🌤️ Tarde' 
-                              : '🌙 Noche',
-                          style: TextStyle(
+                          section.shift == 'Morning'
+                              ? 'Turno Manana'
+                              : section.shift == 'Afternoon'
+                                  ? 'Turno Tarde'
+                                  : 'Turno Noche',
+                          style: const TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
                           ),
@@ -614,7 +725,7 @@ class _CourseSectionsScreenState extends State<CourseSectionsScreen> {
                     Padding(
                       padding: const EdgeInsets.only(top: 4),
                       child: Text(
-                        '❌ GRUPO LLENO - SIN CUPOS DISPONIBLES',
+                        'GRUPO LLENO - SIN CUPOS DISPONIBLES',
                         style: TextStyle(
                           fontSize: 11,
                           color: Colors.red.shade700,

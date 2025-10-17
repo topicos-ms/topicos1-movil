@@ -10,6 +10,7 @@ class Constants {
   // Storage Keys
   static const String tokenKey = 'auth_token';
   static const String userKey = 'user_data';
+  static const String enrollmentIdKeyPrefix = 'enrollment_id_';
   
   // App Info
   static const String appName = 'Universidad Autónoma Gabriel René Moreno';

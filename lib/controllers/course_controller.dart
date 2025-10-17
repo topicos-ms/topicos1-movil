@@ -210,6 +210,21 @@ class CourseController extends ChangeNotifier {
 
   /// PASO 5: Carga el enrollment_id del estudiante desde la lista de enrollments
   Future<void> loadEnrollmentId(String studentId) async {
+    // Intentar reutilizar el enrollment_id almacenado previamente
+    if (_enrollmentId != null) {
+      return;
+    }
+
+    final cachedEnrollmentId =
+        await _storageService.getEnrollmentId(studentId);
+    if (cachedEnrollmentId != null && cachedEnrollmentId.isNotEmpty) {
+      _enrollmentId = cachedEnrollmentId;
+      _state = CourseLoadingState.idle;
+      _errorMessage = null;
+      notifyListeners();
+      return;
+    }
+
     _state = CourseLoadingState.loadingEnrollmentId;
     _errorMessage = null;
     notifyListeners();
@@ -239,9 +254,14 @@ class CourseController extends ChangeNotifier {
               
               if (enrollmentId != null) {
                 _enrollmentId = enrollmentId;
+                _storageService.saveEnrollmentId(
+                  studentId: studentId,
+                  enrollmentId: enrollmentId,
+                );
                 _state = CourseLoadingState.idle;
                 print('✅ Enrollment ID guardado: $_enrollmentId');
               } else {
+                _storageService.deleteEnrollmentId(studentId);
                 _errorMessage = 'No se encontró una matrícula activa para el estudiante';
                 _state = CourseLoadingState.error;
               }
@@ -366,11 +386,16 @@ class CourseController extends ChangeNotifier {
     try {
       print('[Enrollment] Consultando resultado para job $jobId');
       final data = await _pollingService.fetchJobStatus(jobId);
-      final status = (data['status'] as String?)?.toLowerCase();
+      final rawStatus = data['status'] as String?;
+      final status = rawStatus?.toLowerCase();
 
       print('[Enrollment] Estado recibido: $status');
 
-      if (status == 'completed') {
+      if (status == null) {
+        _errorMessage = (data['error'] as String?) ??
+            'No se pudo determinar el estado de la inscripción';
+        _state = CourseLoadingState.error;
+      } else if (status == 'completed') {
         final result = _courseService.parseBatchEnrollmentFromPollingResult(data);
         _enrollmentResult = result;
 
@@ -383,14 +408,18 @@ class CourseController extends ChangeNotifier {
           _errorMessage = result.message;
           _state = CourseLoadingState.error;
         }
-      } else if (status == 'failed') {
-        _errorMessage = (data['error'] as String?) ?? 'Error al procesar la inscripción';
+      } else if (status == 'failed' || status == 'error' || status == 'stalled') {
+        final result = _courseService.parseBatchEnrollmentFromPollingResult(data);
+        _enrollmentResult = result;
+        _errorMessage = result.message.isNotEmpty
+            ? result.message
+            : (data['error'] as String?) ?? 'Error al procesar la inscripción';
         _state = CourseLoadingState.error;
       } else if (status == 'timeout') {
         _errorMessage = 'Tiempo de espera agotado';
         _state = CourseLoadingState.error;
       } else {
-        // Estados intermedios (delayed, waiting, active, etc.)
+        // Estados intermedios (delayed, waiting, active, prioritized, etc.)
         _state = CourseLoadingState.idle;
       }
 
